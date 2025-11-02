@@ -1,0 +1,214 @@
+# Versi modifikasi: Tambah robot ke-4 dengan rute berbeda dan visualisasi titik terpisah
+import heapq
+import random
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.neural_network import MLPRegressor
+
+# -----------------------------------------
+# 1. Data latih MLP
+X_train = [
+    [0, 0, 0], [0, 1, 1], [1, 2, 1], [2, 2, 0],
+    [3, 1, 1], [4, 0, 0]
+]
+y_train = [5, 8, 9, 3, 7, 2]
+
+model = MLPRegressor(hidden_layer_sizes=(5,), max_iter=1000, random_state=1)
+model.fit(X_train, y_train)
+
+# -----------------------------------------
+# 2. Representasi grid lantai perpustakaan
+floor_type = [
+    [0, 0, 1, 'X', 0],
+    [0, 'X', 1, 1, 1],
+    [1, 1, 0, 'X', 0],
+    [1, 0, 0, 1, 0],
+    [0, 'X', 1, 1, 1]
+]
+
+rows, cols = len(floor_type), len(floor_type[0])
+starts = [(0, 0), (4, 0), (2, 0), (0, 0)]
+goals = [(3, 4), (0, 4), (4, 4), (3, 4)]
+
+# -----------------------------------------
+# 3. Prediksi tingkat kekotoran dengan MLP
+def predict_dirt_level(x, y):
+    if floor_type[x][y] == 'X':
+        return float('inf')
+    lantai = floor_type[x][y]
+    pred = model.predict([[x, y, lantai]])
+    return float(pred[0])
+
+# -----------------------------------------
+# 4. Fuzzy prioritas dan waktu tempuh
+def fuzzy_priority(val):
+    if val == float('inf'):
+        return float('inf')
+    elif val > 7:
+        return 1
+    elif 4 <= val <= 7:
+        return 2
+    else:
+        return 3
+
+def estimated_time(priority):
+    if priority == 1:
+        return random.randint(5, 6)
+    elif priority == 2:
+        return random.randint(3, 4)
+    elif priority == 3:
+        return random.randint(1, 2)
+    return 0
+
+# -----------------------------------------
+# 5. Best-First Search dengan fuzzy
+
+directions = [(-1,0), (1,0), (0,-1), (0,1)]
+
+def is_valid(x, y):
+    return 0 <= x < rows and 0 <= y < cols and floor_type[x][y] != 'X'
+
+def best_first_search(start, goal, avoid=set()):
+    visited = set()
+    pq = [(0, start)]
+    parent = {start: None}
+    time_total = {start: 0}
+
+    while pq:
+        cost, current = heapq.heappop(pq)
+        if current in visited or current in avoid:
+            continue
+        visited.add(current)
+
+        if current == goal:
+            break
+
+        for dx, dy in directions:
+            nx, ny = current[0] + dx, current[1] + dy
+            if is_valid(nx, ny):
+                next_node = (nx, ny)
+                if next_node not in visited:
+                    dirt_level = predict_dirt_level(nx, ny)
+                    priority = fuzzy_priority(dirt_level)
+                    heapq.heappush(pq, (priority, next_node))
+                    if next_node not in parent:
+                        parent[next_node] = current
+                        time_total[next_node] = time_total[current] + estimated_time(priority)
+
+    path = []
+    node = goal
+    while node:
+        path.append(node)
+        node = parent.get(node)
+    path.reverse()
+    return path, time_total.get(goal, 0)
+
+# -----------------------------------------
+# 6. Visualisasi grid awal
+def visualize_initial_grid(grid):
+    fig, ax = plt.subplots()
+    data = np.zeros((rows, cols))
+
+    for i in range(rows):
+        for j in range(cols):
+            if grid[i][j] == 'X':
+                data[i][j] = -1
+            else:
+                data[i][j] = predict_dirt_level(i, j)
+
+    cmap = plt.cm.Blues
+    cmap.set_under('black')
+    im = ax.imshow(data, cmap=cmap, vmin=0.1)
+
+    for i in range(rows):
+        for j in range(cols):
+            ax.text(j, i, f"({i},{j})", ha='center', va='center', fontsize=10, color='white')
+
+    offsets = [(-0.2, -0.2), (0.2, -0.2), (-0.2, 0.2), (0.2, 0.2)]
+
+    for idx, (sx, sy) in enumerate(starts):
+        dx, dy = offsets[idx % len(offsets)]
+        ax.text(sy + dy, sx + dx, f'S{idx+1}', ha='center', va='center', color='green', fontsize=12, weight='bold')
+    for idx, (gx, gy) in enumerate(goals):
+        dx, dy = offsets[idx % len(offsets)]
+        ax.text(gy + dy, gx + dx, f'G{idx+1}', ha='center', va='center', color='purple', fontsize=12, weight='bold')
+
+    ax.set_xticks(np.arange(cols))
+    ax.set_yticks(np.arange(rows))
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    plt.title("Grid Awal Lantai Perpustakaan")
+    plt.colorbar(im, label="Prediksi Tingkat Kekotoran")
+    plt.grid(False)
+    plt.show()
+
+# -----------------------------------------
+# 7. Visualisasi hasil jalur robot
+def visualize_paths(grid, paths, starts, goals):
+    fig, ax = plt.subplots()
+    data = np.zeros((rows, cols))
+
+    for i in range(rows):
+        for j in range(cols):
+            if grid[i][j] == 'X':
+                data[i][j] = -1
+            else:
+                data[i][j] = predict_dirt_level(i, j)
+
+    cmap = plt.cm.Blues
+    cmap.set_under('black')
+    im = ax.imshow(data, cmap=cmap, vmin=0.1)
+
+    # Offset posisi visualisasi ● agar tidak bertumpuk
+    offsets = [(-0.2, -0.2), (0.2, -0.2), (-0.2, 0.2), (0.2, 0.2)]
+    colors = ['red', 'orange', 'cyan', 'yellow']
+
+    for robot_idx, (path, color) in enumerate(zip(paths, colors)):
+        dx, dy = offsets[robot_idx % len(offsets)]
+        for (x, y) in path:
+            ax.text(y + dy, x + dx, '●', ha='center', va='center', color=color, fontsize=12)
+
+    for i in range(rows):
+        for j in range(cols):
+            ax.text(j, i, f"({i},{j})", ha='center', va='bottom', fontsize=10, color='white')
+
+    for idx, (sx, sy) in enumerate(starts):
+        dx, dy = offsets[idx % len(offsets)]
+        ax.text(sy + dy, sx + dx, f'S{idx+1}', ha='center', va='center', color='green', fontsize=12, weight='bold')
+    for idx, (gx, gy) in enumerate(goals):
+        dx, dy = offsets[idx % len(offsets)]
+        ax.text(gy + dy, gx + dx, f'G{idx+1}', ha='center', va='center', color='purple', fontsize=12, weight='bold')
+
+
+    ax.set_xticks(np.arange(cols))
+    ax.set_yticks(np.arange(rows))
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    plt.title("Visualisasi Jalur Robot Pembersih")
+    plt.colorbar(im, label="Prediksi Tingkat Kekotoran")
+    plt.grid(False)
+    plt.show()
+
+# -----------------------------------------
+# 8. Eksekusi
+visualize_initial_grid(floor_type)
+
+all_paths = []
+all_times = []
+visited_set = set()
+for i, (s, g) in enumerate(zip(starts, goals)):
+    if i == 3:
+        avoid = set(all_paths[0][1:-1]) if all_paths else set()
+    else:
+        avoid = set()
+
+    path, t = best_first_search(s, g, avoid)
+    all_paths.append(path)
+    all_times.append(t)
+
+
+for idx, (path, time_sec) in enumerate(zip(all_paths, all_times)):
+    print(f"Rute Robot {idx+1} (S{idx+1} → G{idx+1}): {path}")
+    print(f"Estimasi waktu tempuh Robot {idx+1}: {time_sec} detik\n")
+
+visualize_paths(floor_type, all_paths, starts, goals)
